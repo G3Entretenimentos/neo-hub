@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { createServerSupabase } from "@/utils/supabase/server";
 import Link from "next/link";
-import { User, Mail, BookOpen, ChevronRight, ArrowLeft, Pencil } from "lucide-react";
+import { User, Mail, BookOpen, ChevronRight, ArrowLeft, Pencil, Star } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -40,6 +40,20 @@ export default async function PerfilPage() {
   const painelLink = isOrientador ? "/painel-orientador" : "/painel";
   const displayName = profile?.nome || user.email?.split("@")[0] || "Usuário";
 
+  // Nota média (só orientadores)
+  let notaMedia: number | null = null;
+  let totalAvaliacoes = 0;
+  if (isOrientador) {
+    const { data: stats } = await supabase
+      .from("avaliacoes")
+      .select("nota")
+      .eq("orientador_id", user.id);
+    if (stats && stats.length > 0) {
+      totalAvaliacoes = stats.length;
+      notaMedia = stats.reduce((acc: number, a: any) => acc + a.nota, 0) / stats.length;
+    }
+  }
+
   return (
     <main className="neo-bg-panel text-white">
       <header className="sticky top-0 z-40 border-b border-white/5 neo-glass">
@@ -67,10 +81,24 @@ export default async function PerfilPage() {
               {user.email}
             </div>
             {profile?.role && (
-              <div className="mt-2">
+              <div className="mt-2 flex items-center gap-2 flex-wrap">
                 <span className={`badge ${profile.role === "orientador" ? "badge-andamento" : "badge-aberta"}`}>
                   {profile.role === "orientador" ? "Orientador" : "Aluno"}
                 </span>
+                {isOrientador && notaMedia !== null && (
+                  <div className="flex items-center gap-1">
+                    {Array.from({ length: 5 }).map((_, i) => (
+                      <Star
+                        key={i}
+                        className={`w-3.5 h-3.5 ${i < Math.round(notaMedia!) ? "text-yellow-400 fill-yellow-400" : "text-white/20"}`}
+                      />
+                    ))}
+                    <span className="text-white/50 text-xs ml-1">{notaMedia.toFixed(1)} ({totalAvaliacoes})</span>
+                  </div>
+                )}
+                {isOrientador && notaMedia === null && (
+                  <span className="text-white/30 text-xs">Sem avaliações ainda</span>
+                )}
               </div>
             )}
           </div>

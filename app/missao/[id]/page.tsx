@@ -5,8 +5,9 @@ import { createServerSupabase } from "@/utils/supabase/server";
 import {
   ArrowLeft, Clock, CheckCircle2, Zap, User, Tag, Calendar,
   DollarSign, FileText, MessageSquare, ChevronRight, AlertCircle,
-  BookOpen
+  BookOpen, Star
 } from "lucide-react";
+import AvaliacaoForm from "./AvaliacaoForm";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -42,7 +43,6 @@ function nomeOuFallback(nome: string | null | undefined, email: string | null | 
   return "Usuário sem nome";
 }
 
-// ─── Timeline de status ────────────────────────────────────────
 function Timeline({ status }: { status: string }) {
   const steps = [
     { key: "aberta",       label: "Aberta",       icon: Zap },
@@ -59,7 +59,7 @@ function Timeline({ status }: { status: string }) {
         const active = i === currentIdx;
         return (
           <div key={step.key} className="flex items-center flex-1 last:flex-none">
-            <div className={`flex flex-col items-center`}>
+            <div className="flex flex-col items-center">
               <div className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${
                 done
                   ? active
@@ -117,6 +117,13 @@ export default async function MissaoDetalhePage({ params, searchParams }: PagePr
     alunoNomeBruto = data?.nome ?? null;
   }
 
+  // Buscar avaliação existente
+  const { data: avaliacaoExistente } = await supabase
+    .from("avaliacoes")
+    .select("nota, comentario")
+    .eq("missao_id", id)
+    .maybeSingle();
+
   const orientadorEmail = isOrientador ? user.email ?? null : null;
   const alunoEmail = isAluno ? user.email ?? null : null;
   const alunoNome = nomeOuFallback(alunoNomeBruto, alunoEmail);
@@ -125,7 +132,6 @@ export default async function MissaoDetalhePage({ params, searchParams }: PagePr
 
   return (
     <main className="neo-bg-panel text-white">
-      {/* Header */}
       <header className="sticky top-0 z-40 border-b border-white/5 neo-glass">
         <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
           <Link href="/" className="flex items-center gap-2">
@@ -148,6 +154,11 @@ export default async function MissaoDetalhePage({ params, searchParams }: PagePr
         {sp?.ok === "concluida" && (
           <div className="mb-6 rounded-xl border border-emerald-500/25 bg-emerald-500/8 px-5 py-3.5 text-emerald-200 flex items-center gap-2 text-sm">
             <CheckCircle2 className="w-4 h-4 shrink-0" /> Missão concluída com sucesso! 🎉
+          </div>
+        )}
+        {sp?.ok === "avaliado" && (
+          <div className="mb-6 rounded-xl border border-yellow-500/25 bg-yellow-500/8 px-5 py-3.5 text-yellow-200 flex items-center gap-2 text-sm">
+            <Star className="w-4 h-4 shrink-0 fill-yellow-400 text-yellow-400" /> Avaliação enviada! Obrigado pelo feedback.
           </div>
         )}
         {sp?.error && (
@@ -177,7 +188,6 @@ export default async function MissaoDetalhePage({ params, searchParams }: PagePr
 
         {/* Main grid */}
         <div className="grid lg:grid-cols-3 gap-6 mb-6">
-          {/* Info cards */}
           <div className="lg:col-span-2 space-y-4">
             {/* Badges */}
             <div className="neo-card p-5 flex items-center gap-3 flex-wrap">
@@ -248,36 +258,33 @@ export default async function MissaoDetalhePage({ params, searchParams }: PagePr
 
           {/* Ações */}
           <div className="space-y-4">
-            {/* Ações da missão */}
             <div className="neo-card border border-blue-500/20 bg-blue-500/5 p-5">
               <h3 className="font-bold mb-4">Ações</h3>
 
               {isOrientador ? (
                 <div className="space-y-3">
                   <p className="text-white/50 text-xs">Você é o orientador desta missão.</p>
-
                   {missao.status === "em_andamento" ? (
                     <form action={marcarMissaoEntregueAction}>
                       <input type="hidden" name="missao_id" value={missao.id} />
-                      <button className="neo-btn-primary w-full justify-center py-3 bg-green-600 hover:bg-green-500">
+                      <button className="neo-btn-primary w-full justify-center py-3 text-sm" style={{background: 'rgb(22 163 74)'}}>
                         <CheckCircle2 className="w-4 h-4" /> Marcar como entregue
                       </button>
                     </form>
                   ) : (
-                    <button disabled className="neo-btn-ghost w-full justify-center py-3 opacity-40 cursor-not-allowed">
+                    <button disabled className="neo-btn-ghost w-full justify-center py-3 text-sm opacity-40 cursor-not-allowed">
                       Marcar como entregue
                     </button>
                   )}
-
                   {missao.status === "entregue" ? (
                     <form action={concluirMissaoAction}>
                       <input type="hidden" name="missao_id" value={missao.id} />
-                      <button className="neo-btn-primary w-full justify-center py-3">
+                      <button className="neo-btn-primary w-full justify-center py-3 text-sm">
                         <CheckCircle2 className="w-4 h-4" /> Concluir missão
                       </button>
                     </form>
                   ) : (
-                    <button disabled className="neo-btn-ghost w-full justify-center py-3 opacity-40 cursor-not-allowed">
+                    <button disabled className="neo-btn-ghost w-full justify-center py-3 text-sm opacity-40 cursor-not-allowed">
                       Concluir missão
                     </button>
                   )}
@@ -315,6 +322,38 @@ export default async function MissaoDetalhePage({ params, searchParams }: PagePr
                 </div>
                 <ChevronRight className="w-4 h-4 text-white/30 group-hover:text-purple-400 group-hover:translate-x-1 transition-all" />
               </Link>
+            )}
+
+            {/* Avaliação — só aluno, só concluída */}
+            {isAluno && missao.status === "concluida" && missao.orientador_id && (
+              <div className="neo-card border border-yellow-500/20 bg-yellow-500/5 p-5">
+                <div className="flex items-center gap-2 mb-4">
+                  <Star className="w-4 h-4 text-yellow-400" />
+                  <h3 className="font-bold text-sm">Avaliar orientador</h3>
+                </div>
+                {avaliacaoExistente ? (
+                  <div className="space-y-2">
+                    <div className="flex gap-1">
+                      {Array.from({ length: 5 }).map((_, i) => (
+                        <Star
+                          key={i}
+                          className={`w-5 h-5 ${i < (avaliacaoExistente.nota ?? 0) ? "text-yellow-400 fill-yellow-400" : "text-white/20"}`}
+                        />
+                      ))}
+                    </div>
+                    {avaliacaoExistente.comentario && (
+                      <p className="text-white/50 text-xs italic">"{avaliacaoExistente.comentario}"</p>
+                    )}
+                    <p className="text-white/30 text-xs">Avaliação enviada ✓</p>
+                  </div>
+                ) : (
+                  <AvaliacaoForm
+                    missaoId={missao.id}
+                    orientadorId={missao.orientador_id}
+                    alunoId={user.id}
+                  />
+                )}
+              </div>
             )}
           </div>
         </div>
