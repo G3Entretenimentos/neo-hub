@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { createServerSupabase } from "@/utils/supabase/server";
-import { aceitarMissaoAction, signOutAction } from "@/app/actions";
+import { signOutAction } from "@/app/actions";
+
 import Link from "next/link";
 import {
   BookOpen, Calculator, Microscope, Cpu,
@@ -62,12 +63,12 @@ function CardMissao({ missao, mostrarBotaoAceitar = false }: { missao: any; most
 
       <div className="flex justify-end pt-4 border-t border-white/5">
         {mostrarBotaoAceitar ? (
-          <form action={aceitarMissaoAction}>
-            <input type="hidden" name="missao_id" value={missao.id} />
-            <button className="neo-btn-primary text-sm py-2 px-5">
-              <CheckCircle2 className="w-4 h-4" /> Aceitar missão
-            </button>
-          </form>
+          <Link
+            href={`/missao/${missao.id}`}
+            className="neo-btn-primary text-sm py-2 px-5"
+          >
+            <ChevronRight className="w-4 h-4" /> Ver e Propor
+          </Link>
         ) : (
           <Link
             href={`/missao/${missao.id}`}

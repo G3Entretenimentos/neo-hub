@@ -227,3 +227,123 @@ export async function concluirMissaoAction(formData: FormData) {
 
   redirect(`/missao/${missaoId}?ok=concluida`);
 }
+
+export async function enviarPropostaAction(formData: FormData) {
+  const missaoId = String(formData.get("missao_id") ?? "").trim();
+  const valor = formData.get("valor");
+  const prazoDias = formData.get("prazo_dias");
+  const mensagem = String(formData.get("mensagem") ?? "").trim();
+
+  if (!missaoId) redirect("/painel-orientador?error=Missao%20invalida");
+
+  const supabase = await createClient();
+  const { data: auth } = await supabase.auth.getUser();
+  const orientadorId = auth?.user?.id;
+
+  if (!orientadorId) redirect("/login");
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", orientadorId)
+    .single();
+
+  if (profile?.role !== "orientador") {
+    redirect("/painel?error=Acesso%20negado");
+  }
+
+  // Verifica se a missão ainda está aberta
+  const { data: missao } = await supabase
+    .from("missoes")
+    .select("id, status")
+    .eq("id", missaoId)
+    .single();
+
+  if (!missao || missao.status !== "aberta") {
+    redirect(`/missao/${missaoId}?error=Missao%20nao%20esta%20aberta`);
+  }
+
+  const { error } = await supabase.from("propostas").upsert(
+    {
+      missao_id: missaoId,
+      orientador_id: orientadorId,
+      valor: valor ? Number(valor) : null,
+      prazo_dias: prazoDias ? Number(prazoDias) : null,
+      mensagem: mensagem || null,
+      status: "pendente",
+    },
+    { onConflict: "missao_id,orientador_id" }
+  );
+
+  if (error) {
+    redirect(`/missao/${missaoId}?error=Falha%20ao%20enviar%20proposta`);
+  }
+
+  redirect(`/missao/${missaoId}?ok=proposta_enviada`);
+}
+
+export async function responderPropostaAction(formData: FormData) {
+  const propostaId = String(formData.get("proposta_id") ?? "").trim();
+  const missaoId = String(formData.get("missao_id") ?? "").trim();
+  const resposta = String(formData.get("resposta") ?? "").trim(); // "aceita" | "recusada"
+
+  if (!propostaId || !missaoId || !["aceita", "recusada"].includes(resposta)) {
+    redirect("/painel?error=Dados%20invalidos");
+  }
+
+  const supabase = await createClient();
+  const { data: auth } = await supabase.auth.getUser();
+  const alunoId = auth?.user?.id;
+
+  if (!alunoId) redirect("/login");
+
+  // Valida que o aluno é dono da missão
+  const { data: missao } = await supabase
+    .from("missoes")
+    .select("id, status, aluno_id")
+    .eq("id", missaoId)
+    .single();
+
+  if (!missao || missao.aluno_id !== alunoId || missao.status !== "aberta") {
+    redirect(`/missao/${missaoId}?error=Acao%20nao%20permitida`);
+  }
+
+  // Busca a proposta para pegar o orientador_id
+  const { data: proposta } = await supabase
+    .from("propostas")
+    .select("id, orientador_id")
+    .eq("id", propostaId)
+    .eq("missao_id", missaoId)
+    .single();
+
+  if (!proposta) {
+    redirect(`/missao/${missaoId}?error=Proposta%20nao%20encontrada`);
+  }
+
+  // Atualiza status da proposta
+  await supabase
+    .from("propostas")
+    .update({ status: resposta })
+    .eq("id", propostaId);
+
+  // Se aceitar: inicia a missão com esse orientador e recusa as demais
+  if (resposta === "aceita") {
+    await supabase
+      .from("missoes")
+      .update({ status: "em_andamento", orientador_id: proposta.orientador_id })
+      .eq("id", missaoId)
+      .eq("status", "aberta");
+
+    // Recusa as outras propostas abertas da mesma missão
+    await supabase
+      .from("propostas")
+      .update({ status: "recusada" })
+      .eq("missao_id", missaoId)
+      .neq("id", propostaId)
+      .eq("status", "pendente");
+
+    redirect(`/missao/${missaoId}?ok=proposta_aceita`);
+  }
+
+  redirect(`/missao/${missaoId}?ok=proposta_recusada`);
+}

@@ -1,11 +1,16 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { concluirMissaoAction, marcarMissaoEntregueAction } from "@/app/actions";
+import {
+  concluirMissaoAction,
+  marcarMissaoEntregueAction,
+  enviarPropostaAction,
+  responderPropostaAction,
+} from "@/app/actions";
 import { createServerSupabase } from "@/utils/supabase/server";
 import {
   ArrowLeft, Clock, CheckCircle2, Zap, User, Tag, Calendar,
   DollarSign, FileText, MessageSquare, ChevronRight, AlertCircle,
-  BookOpen, Star
+  BookOpen, Star, Send, ThumbsUp, ThumbsDown, Handshake
 } from "lucide-react";
 import AvaliacaoForm from "./AvaliacaoForm";
 
@@ -102,7 +107,14 @@ export default async function MissaoDetalhePage({ params, searchParams }: PagePr
   if (!missao) redirect("/painel");
 
   const isAluno = missao.aluno_id === user.id;
-  const isOrientador = missao.orientador_id === user.id;
+  // Check user profile to know if they are an orientador (even if not yet assigned)
+  const { data: userProfile } = await supabase
+    .from("profiles")
+    .select("role, nome")
+    .eq("id", user.id)
+    .single();
+  const isOrientadorAtribuido = missao.orientador_id === user.id;
+  const isOrientador = isOrientadorAtribuido || (!isAluno && userProfile?.role === "orientador");
   if (!isAluno && !isOrientador) redirect("/painel");
 
   let orientadorNomeBruto: string | null = null;
@@ -123,6 +135,44 @@ export default async function MissaoDetalhePage({ params, searchParams }: PagePr
     .select("nota, comentario")
     .eq("missao_id", id)
     .maybeSingle();
+
+  // Buscar propostas
+  type Proposta = { id: string; orientador_id: string; valor: number | null; prazo_dias: number | null; mensagem: string | null; status: string; created_at: string; orientador_nome?: string };
+  let propostas: Proposta[] = [];
+  let minhaPropostaJaEnviada: Proposta | null = null;
+
+  if (missao.status === "aberta") {
+    if (isAluno) {
+      // Aluno vê todas as propostas pendentes
+      const { data: props } = await supabase
+        .from("propostas")
+        .select("id, orientador_id, valor, prazo_dias, mensagem, status, created_at")
+        .eq("missao_id", id)
+        .order("created_at", { ascending: false });
+
+      if (props && props.length > 0) {
+        // Busca nomes dos orientadores
+        const orIds = [...new Set(props.map((p: any) => p.orientador_id))];
+        const { data: ors } = await supabase
+          .from("profiles")
+          .select("id, nome")
+          .in("id", orIds);
+        const orMap: Record<string, string> = Object.fromEntries(
+          (ors ?? []).map((o: any) => [o.id, o.nome || "Orientador"])
+        );
+        propostas = (props as Proposta[]).map((p) => ({ ...p, orientador_nome: orMap[p.orientador_id] }));
+      }
+    } else if (isOrientador) {
+      // Orientador vê só a proposta que ele mesmo enviou
+      const { data: minhaProp } = await supabase
+        .from("propostas")
+        .select("id, orientador_id, valor, prazo_dias, mensagem, status, created_at")
+        .eq("missao_id", id)
+        .eq("orientador_id", user.id)
+        .maybeSingle();
+      if (minhaProp) minhaPropostaJaEnviada = minhaProp as Proposta;
+    }
+  }
 
   const orientadorEmail = isOrientador ? user.email ?? null : null;
   const alunoEmail = isAluno ? user.email ?? null : null;
@@ -159,6 +209,21 @@ export default async function MissaoDetalhePage({ params, searchParams }: PagePr
         {sp?.ok === "avaliado" && (
           <div className="mb-6 rounded-xl border border-yellow-500/25 bg-yellow-500/8 px-5 py-3.5 text-yellow-200 flex items-center gap-2 text-sm">
             <Star className="w-4 h-4 shrink-0 fill-yellow-400 text-yellow-400" /> Avaliação enviada! Obrigado pelo feedback.
+          </div>
+        )}
+        {sp?.ok === "proposta_enviada" && (
+          <div className="mb-6 rounded-xl border border-blue-500/25 bg-blue-500/8 px-5 py-3.5 text-blue-200 flex items-center gap-2 text-sm">
+            <Send className="w-4 h-4 shrink-0" /> Proposta enviada com sucesso! Aguarde a resposta do aluno.
+          </div>
+        )}
+        {sp?.ok === "proposta_aceita" && (
+          <div className="mb-6 rounded-xl border border-green-500/25 bg-green-500/8 px-5 py-3.5 text-green-200 flex items-center gap-2 text-sm">
+            <Handshake className="w-4 h-4 shrink-0" /> Proposta aceita! A missão está agora em andamento. 🎉
+          </div>
+        )}
+        {sp?.ok === "proposta_recusada" && (
+          <div className="mb-6 rounded-xl border border-white/10 bg-white/5 px-5 py-3.5 text-white/60 flex items-center gap-2 text-sm">
+            <ThumbsDown className="w-4 h-4 shrink-0" /> Proposta recusada.
           </div>
         )}
         {sp?.error && (
@@ -264,30 +329,64 @@ export default async function MissaoDetalhePage({ params, searchParams }: PagePr
               {isOrientador ? (
                 <div className="space-y-3">
                   <p className="text-white/50 text-xs">Você é o orientador desta missão.</p>
-                  {missao.status === "em_andamento" ? (
+
+                  {/* Se a missão ainda está aberta, orientador pode enviar proposta */}
+                  {missao.status === "aberta" && (
+                    minhaPropostaJaEnviada ? (
+                      <div className="rounded-xl border border-blue-500/20 bg-blue-500/8 p-4 space-y-1">
+                        <p className="text-blue-300 text-xs font-semibold flex items-center gap-1.5">
+                          <Send className="w-3.5 h-3.5" /> Proposta enviada
+                        </p>
+                        {minhaPropostaJaEnviada.valor && (
+                          <p className="text-white/70 text-xs">Valor: <span className="text-green-400 font-bold">R$ {Number(minhaPropostaJaEnviada.valor).toLocaleString("pt-BR")}</span></p>
+                        )}
+                        {minhaPropostaJaEnviada.prazo_dias && (
+                          <p className="text-white/70 text-xs">Prazo: <span className="font-semibold">{minhaPropostaJaEnviada.prazo_dias} dias</span></p>
+                        )}
+                        <p className="text-white/40 text-xs mt-1">Aguardando resposta do aluno...</p>
+                      </div>
+                    ) : (
+                      <form action={enviarPropostaAction} className="space-y-3">
+                        <input type="hidden" name="missao_id" value={missao.id} />
+                        <p className="text-white/50 text-xs">Envie sua proposta para esta missão.</p>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="text-xs text-white/40 mb-1 block">Valor (R$)</label>
+                            <input type="number" name="valor" min="0" step="0.01" placeholder="Ex: 150" className="neo-input text-sm py-2" />
+                          </div>
+                          <div>
+                            <label className="text-xs text-white/40 mb-1 block">Prazo (dias)</label>
+                            <input type="number" name="prazo_dias" min="1" placeholder="Ex: 7" className="neo-input text-sm py-2" />
+                          </div>
+                        </div>
+                        <textarea name="mensagem" placeholder="Apresente-se e explique como você pode ajudar..." rows={3} className="neo-input text-sm resize-none" />
+                        <button type="submit" className="neo-btn-primary w-full justify-center py-2.5 text-sm">
+                          <Send className="w-4 h-4" /> Enviar proposta
+                        </button>
+                      </form>
+                    )
+                  )}
+
+                  {/* Ações para missão em andamento */}
+                  {missao.status === "em_andamento" && isOrientadorAtribuido ? (
                     <form action={marcarMissaoEntregueAction}>
                       <input type="hidden" name="missao_id" value={missao.id} />
                       <button className="neo-btn-primary w-full justify-center py-3 text-sm" style={{background: 'rgb(22 163 74)'}}>
                         <CheckCircle2 className="w-4 h-4" /> Marcar como entregue
                       </button>
                     </form>
-                  ) : (
-                    <button disabled className="neo-btn-ghost w-full justify-center py-3 text-sm opacity-40 cursor-not-allowed">
-                      Marcar como entregue
-                    </button>
-                  )}
-                  {missao.status === "entregue" ? (
+                  ) : missao.status === "em_andamento" && !isOrientadorAtribuido ? (
+                    <p className="text-white/40 text-xs text-center">Missão em andamento com outro orientador.</p>
+                  ) : null}
+
+                  {missao.status === "entregue" && isOrientadorAtribuido ? (
                     <form action={concluirMissaoAction}>
                       <input type="hidden" name="missao_id" value={missao.id} />
                       <button className="neo-btn-primary w-full justify-center py-3 text-sm">
                         <CheckCircle2 className="w-4 h-4" /> Concluir missão
                       </button>
                     </form>
-                  ) : (
-                    <button disabled className="neo-btn-ghost w-full justify-center py-3 text-sm opacity-40 cursor-not-allowed">
-                      Concluir missão
-                    </button>
-                  )}
+                  ) : null}
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -299,11 +398,70 @@ export default async function MissaoDetalhePage({ params, searchParams }: PagePr
                       ? "📦 O orientador marcou como entregue."
                       : missao.status === "em_andamento"
                       ? "⚡ Em andamento com o orientador."
-                      : "⏳ Aguardando um orientador aceitar."}
+                      : propostas.length > 0
+                      ? `📬 Você tem ${propostas.length} proposta(s) — veja abaixo.`
+                      : "⏳ Aguardando propostas de orientadores."}
                   </div>
                 </div>
               )}
             </div>
+
+            {/* Propostas recebidas — só aluno vê, missão aberta */}
+            {isAluno && missao.status === "aberta" && propostas.length > 0 && (
+              <div className="neo-card border border-indigo-500/20 bg-indigo-500/5 p-5">
+                <div className="flex items-center gap-2 mb-4">
+                  <Handshake className="w-4 h-4 text-indigo-400" />
+                  <h3 className="font-bold text-sm">Propostas recebidas ({propostas.length})</h3>
+                </div>
+                <div className="space-y-3">
+                  {propostas.map((prop) => (
+                    <div key={prop.id} className="rounded-xl border border-white/8 bg-white/4 p-4">
+                      <div className="flex items-start justify-between gap-3 mb-2">
+                        <div>
+                          <p className="font-semibold text-sm">{prop.orientador_nome}</p>
+                          <div className="flex gap-3 mt-1">
+                            {prop.valor && (
+                              <span className="text-green-400 text-xs font-bold">R$ {Number(prop.valor).toLocaleString("pt-BR")}</span>
+                            )}
+                            {prop.prazo_dias && (
+                              <span className="text-white/50 text-xs">{prop.prazo_dias} dias</span>
+                            )}
+                          </div>
+                        </div>
+                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                          prop.status === "pendente" ? "bg-yellow-500/15 text-yellow-300 border border-yellow-500/25" :
+                          prop.status === "aceita"   ? "bg-green-500/15 text-green-300 border border-green-500/25" :
+                          "bg-white/8 text-white/40 border border-white/10"
+                        }`}>{prop.status}</span>
+                      </div>
+                      {prop.mensagem && (
+                        <p className="text-white/55 text-xs leading-relaxed mb-3 italic">"{prop.mensagem}"</p>
+                      )}
+                      {prop.status === "pendente" && (
+                        <div className="flex gap-2">
+                          <form action={responderPropostaAction} className="flex-1">
+                            <input type="hidden" name="proposta_id" value={prop.id} />
+                            <input type="hidden" name="missao_id" value={missao.id} />
+                            <input type="hidden" name="resposta" value="aceita" />
+                            <button type="submit" className="w-full flex items-center justify-center gap-1.5 rounded-xl border border-green-500/30 bg-green-500/10 text-green-300 text-xs font-semibold py-2.5 hover:bg-green-500/20 transition">
+                              <ThumbsUp className="w-3.5 h-3.5" /> Aceitar
+                            </button>
+                          </form>
+                          <form action={responderPropostaAction} className="flex-1">
+                            <input type="hidden" name="proposta_id" value={prop.id} />
+                            <input type="hidden" name="missao_id" value={missao.id} />
+                            <input type="hidden" name="resposta" value="recusada" />
+                            <button type="submit" className="w-full flex items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/5 text-white/40 text-xs font-semibold py-2.5 hover:bg-white/10 transition">
+                              <ThumbsDown className="w-3.5 h-3.5" /> Recusar
+                            </button>
+                          </form>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Chat */}
             {missao.status !== "aberta" && missao.orientador_id && (
